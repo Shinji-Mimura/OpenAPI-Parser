@@ -49,12 +49,6 @@ This extension requires Jython standalone to run, as it uses Python 2.7 syntax c
    5. All generated requests are automatically sent to the Repeater tab in Burp Suite.
       - The requests in the Repeater tab are numbered sequentially, starting from 1 each time a new YAML file is imported.
 
-## TODO
-
-Certainly! Here's a suggested "TODO List" section for your README file. This can help you and others track features to add, improvements, or any pending tasks related to the project:
-
----
-
 ## TODO List
 
 ### Features to Implement
