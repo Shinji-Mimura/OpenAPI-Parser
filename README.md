@@ -1,3 +1,10 @@
+## About
+
+This project is a Python adaptation of the popular [openapi-parser](https://github.com/aress31/openapi-parser) extension. The decision to rewrite this extension and use Python to adapt it had the following goals:
+
+- To fix some of the extension's issues, primarily those related to the request body parser;
+- To make it easier to incorporate modifications to the code as new OpenAPI specifications emerge.
+
 ## How to Install
 
 ### Prerequisites
@@ -52,6 +59,22 @@ This extension requires Jython standalone to run, as it uses Python 2.7 syntax c
    - All generated requests are automatically sent to the Repeater tab in Burp Suite.
    - The requests in the Repeater tab are numbered sequentially, starting from 1 each time a new YAML file is imported.
    - You can modify and send these requests from the Repeater tab as needed.
+
+## TODO
+
+Certainly! Here's a suggested "TODO List" section for your README file. This can help you and others track features to add, improvements, or any pending tasks related to the project:
+
+---
+
+## TODO List
+
+### Features to Implement
+- [ ] **Authentication Support:** Integrate authentication mechanisms, such as API keys, OAuth, or JWT tokens, into generated requests.
+
+### UI Improvements
+- [ ] **Enhanced Request Viewer:** Replace the current text area with a more interactive request editor or viewer component.
+- [ ] **Filter and Search:** Implement filtering and search capabilities within the request table to quickly locate specific requests.
+- [ ] **Sortable Columns:** Allow table columns to be sortable by clicking on headers (e.g., sorting requests by ID, Method, or URL).
 
 ## License
 

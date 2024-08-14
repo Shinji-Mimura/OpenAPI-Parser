@@ -2,11 +2,10 @@ import yaml
 import os
 import re
 from burp import IBurpExtender, ITab
-from javax.swing import JPanel, JButton, JFileChooser, JLabel, BoxLayout, JTextArea, JScrollPane
-from java.awt import Dimension, FlowLayout, GridBagConstraints, GridBagLayout, BorderLayout
-from java.net import URI
-from java.util import ArrayList
-from burp import IHttpRequestResponse
+from javax.swing import JPanel, JButton, JFileChooser, JLabel, BoxLayout, JTextArea, JScrollPane, JSplitPane, JTabbedPane, JTextField, SwingUtilities, UIManager, BorderFactory, JTable, ListSelectionModel
+from java.awt import Dimension, FlowLayout, GridBagConstraints, GridBagLayout, BorderLayout, Font, Insets
+from javax.swing.table import DefaultTableModel
+from javax.swing.event import ListSelectionListener, DocumentListener
 import json
 
 class BurpExtender(IBurpExtender, ITab):
@@ -16,26 +15,19 @@ class BurpExtender(IBurpExtender, ITab):
         self.request_counter = 1  # Initialize the counter
         callbacks.setExtensionName("OpenAPI YAML Parser (3.0)")
 
-        # Create the tab panel
+        # Main Panel with BorderLayout
         self._panel = JPanel()
-        self._panel.setLayout(BoxLayout(self._panel, BoxLayout.Y_AXIS))
+        self._panel.setLayout(BorderLayout())
 
-        buttons_panel = JPanel()
-        buttons_panel.setLayout(FlowLayout(FlowLayout.CENTER))
+        # Create the North panel with input fields and buttons
+        north_panel = self.create_north_panel()
+        self._panel.add(north_panel, BorderLayout.NORTH)
 
-        # Create the "Import YAML File" button
-        self._button = JButton("Import YAML File", actionPerformed=self.import_yaml)
-        buttons_panel.add(self._button)
-        self._panel.add(buttons_panel, BorderLayout.NORTH)
+        # Create the central split pane with the request viewer and the table
+        split_pane = self.create_split_pane()
+        self._panel.add(split_pane, BorderLayout.CENTER)
 
-        # Create a text area to show the loaded requests
-        self._text_area = JTextArea()
-        self._text_area.setEditable(False)
-        scroll_pane = JScrollPane(self._text_area)
-        scroll_pane.setPreferredSize(Dimension(500, 800))
-        self._panel.add(scroll_pane, BorderLayout.CENTER)
-
-        # Create a status label
+        # Create a status label at the bottom
         self._status_label = JLabel("")
         self._panel.add(self._status_label, BorderLayout.SOUTH)
 
@@ -48,53 +40,155 @@ class BurpExtender(IBurpExtender, ITab):
     def getUiComponent(self):
         return self._panel
 
-    def import_yaml(self, event):
-        # Open file chooser dialog
-        self.request_counter = 1
+    def create_north_panel(self):
+        resource_panel = JPanel(GridBagLayout())
+        resource_panel.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getLookAndFeelDefaults().getColor("Separator.foreground")))
+
+        self.resourceTextField = JTextField(30)
+        self.loadButton = self.create_button("Load", self.load_yaml)
+        self.loadButton.setEnabled(False)
+
+        browseButton = self.create_button("Browse", self.browse_for_file)
+
+        gbc = GridBagConstraints()
+        gbc.insets = Insets(0, 5, 0, 5)
+
+        resource_panel.add(JLabel("Parse from local file:"), gbc)
+
+        gbc.fill = GridBagConstraints.HORIZONTAL
+        gbc.gridx = 1
+        gbc.weightx = 1
+        gbc.insets = Insets(0, 0, 0, 0)
+        resource_panel.add(self.resourceTextField, gbc)
+
+        gbc.gridx = 2
+        gbc.weightx = 0
+        gbc.insets = Insets(0, 0, 0, 5)
+        east_panel = JPanel(FlowLayout(FlowLayout.RIGHT))
+        east_panel.add(browseButton)
+        east_panel.add(self.loadButton)
+        resource_panel.add(east_panel, gbc)
+
+        # Document listener to enable the load button when the text field is not empty
+        self.resourceTextField.getDocument().addDocumentListener(DocumentListenerAdapter(self.loadButton, self.resourceTextField))
+
+        return resource_panel
+
+    def create_split_pane(self):
+        # Create a table model with columns: ID, Host, Method, URL, Parameters, Description, Entry (hidden)
+        self.table_model = DefaultTableModel(["ID", "Host", "Method", "URL", "Parameters", "Description", "Entry"], 0)
+        self.request_table = JTable(self.table_model)
+        self.request_table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+
+        # Hide the "Entry" column (last column)
+        self.request_table.getColumn("Entry").setMinWidth(0)
+        self.request_table.getColumn("Entry").setMaxWidth(0)
+        self.request_table.getColumn("Entry").setWidth(0)
+
+        # Add a listener to display request details when a row is selected
+        self.request_table.getSelectionModel().addListSelectionListener(ListSelectionListenerAdapter(self))
+
+        scroll_pane_table = JScrollPane(self.request_table)
+
+        # Create a text area to show the selected request details
+        self._text_area = JTextArea()
+        self._text_area.setEditable(False)
+        scroll_pane_details = JScrollPane(self._text_area)
+
+        # Create split pane
+        split_pane = JSplitPane(JSplitPane.VERTICAL_SPLIT)
+        split_pane.setTopComponent(scroll_pane_table)
+        split_pane.setBottomComponent(scroll_pane_details)
+        split_pane.setResizeWeight(0.6)
+
+        return split_pane
+
+    def build_params_list(self, entry):
+        # Start with an empty list of parameters
+        param_list = []
+
+        # Extract parameters from the request body (if any)
+        request_body = entry.get('request')
+        if request_body:
+            # Attempt to extract JSON body parameters
+            try:
+                body_params = json.loads(request_body.split("\r\n\r\n", 1)[1])
+                param_list += [key for key in body_params.keys()]
+            except (ValueError, IndexError):
+                pass  # Handle non-JSON or empty bodies gracefully
+
+        # Extract parameters from the URL (if any)
+        url = entry.get('url', '')
+        if '?' in url:
+            query_string = url.split('?', 1)[1]
+            url_params = query_string.split('&')
+            param_list += ["{}".format(param.split('=')[0]) for param in url_params]
+
+        # Return the parameter list or "No parameters" if the list is empty
+        return "; ".join(param_list) if param_list else "No parameters"
+
+    def create_button(self, text, action):
+        button = JButton(text)
+        button.setBackground(UIManager.getColor("Burp.burpOrange"))
+        button.setFont(Font(button.getFont().getName(), Font.BOLD, button.getFont().getSize()))
+        button.setForeground(UIManager.getColor("Burp.primaryButtonForeground"))
+        button.addActionListener(action)
+        return button
+
+    def browse_for_file(self, event):
         chooser = JFileChooser()
         ret = chooser.showOpenDialog(self._panel)
         if ret == JFileChooser.APPROVE_OPTION:
             file = chooser.getSelectedFile()
-            self._status_label.setText("Loading: " + file.getAbsolutePath())
-            self.process_yaml_file(file.getAbsolutePath())
+            self.resourceTextField.setText(file.getAbsolutePath())
+            self.loadButton.setEnabled(True)
         else:
             self._status_label.setText("No file selected")
+
+    def load_yaml(self, event):
+        file_path = self.resourceTextField.getText()
+        if file_path:
+            self.process_yaml_file(file_path)
 
     def process_yaml_file(self, file_path):
         # Load the YAML file
         with open(file_path, 'r') as yaml_file:
             openapi_spec = yaml.safe_load(yaml_file)
 
-        # Clear the text area before loading new content
+        # Reset counter
+        self.request_counter = 1
+
+        # Clear the table and text area before loading new content
+        self.table_model.setRowCount(0)
         self._text_area.setText("")
 
         # Parse the OpenAPI specification and create requests
         log_entries = self.parse_openapi(openapi_spec)
 
-        separator_line = "-" * 50
-
-        # Send requests to the Repeater and display them in the UI
+        # Add each entry to the table
         for entry in log_entries:
             request = entry['request']
             host = entry['host']
-            port = entry['port']
-            protocol = entry['protocol']
-            description = "{}: {}".format(self.request_counter, entry['description'] if entry['description'] else "No description available")
+            method = entry['method']
+            url = entry['url']
+            description = entry['description'] if entry['description'] else "No description available"
+            params = self.build_params_list(entry)  # Extract the parameters list
+
+            # Add the data to the table, storing the entire entry in the last column
+            self.table_model.addRow([self.request_counter, host, method, url, params, description, entry])
 
             # Increment the request counter
             self.request_counter += 1
 
             # Create the HttpService
-            http_service = self._helpers.buildHttpService(host, port, protocol == "https")
+            http_service = self._helpers.buildHttpService(host, entry['port'], entry['protocol'] == "https")
 
             # Send the request to the Repeater tab
-            self._callbacks.sendToRepeater(http_service.getHost(), http_service.getPort(), http_service.getProtocol() == "https", self._helpers.stringToBytes(request), description)
+            self._callbacks.sendToRepeater(http_service.getHost(), http_service.getPort(), http_service.getProtocol() == "https", self._helpers.stringToBytes(request), str(self.request_counter))
 
-            # Update the UI text area with the request and description
-            self._text_area.append("{}\n".format(separator_line, description))
-            self._text_area.append("Request {}:\n{}\nDescription: {}\n\n".format(self.request_counter - 1, request, description))
+        print("Requests imported to Repeater")
 
-        self._status_label.setText("Requests imported to Repeater")
+
 
     def parse_openapi(self, openapi):
         log_entries = []
@@ -105,7 +199,8 @@ class BurpExtender(IBurpExtender, ITab):
                 operation_map = self.get_operation_map(path_item)
                 for method, operation in operation_map.items():
                     if operation:
-                        self.build_request(log_entries, server_url, path, method, operation, openapi.get('components', {}).get('schemas', {}))
+                        entry = self.build_request(server_url, path, method, operation, openapi.get('components', {}).get('schemas', {}))
+                        log_entries.append(entry)
 
         return log_entries
 
@@ -120,7 +215,8 @@ class BurpExtender(IBurpExtender, ITab):
             'TRACE': path_item.get('trace')
         }
 
-    def build_request(self, log_entries, server_url, path, method, operation, schemas):
+    def build_request(self, server_url, path, method, operation, schemas):
+        entry = {}
         try:
             # Use the original placeholder format
             path_with_placeholders = path  # Keep the original {param} format
@@ -142,7 +238,6 @@ class BurpExtender(IBurpExtender, ITab):
                     path_with_placeholders += '?' + query_string
 
             # Create the request line with HTTP/1.1
-
             request_line = "{} {} HTTP/1.1".format(method.upper(), path_with_placeholders)
             # Build headers, including the Host header
             headers = self.build_http_headers(host, method, path_with_placeholders, operation.get('requestBody'), operation.get('responses'))
@@ -154,15 +249,21 @@ class BurpExtender(IBurpExtender, ITab):
             header_lines = "\r\n".join(["{}: {}".format(header['name'], header['value']) for header in headers])
             request = "{}\r\n{}\r\n\r\n{}".format(request_line, header_lines, request_body)
 
-            log_entries.append({
+            # Store request details for the table
+            entry = {
                 'request': request,
                 'host': host,
+                'method': method.upper(),
+                'url': path_with_placeholders,
                 'port': port,
                 'protocol': protocol,
                 'description': operation.get('description', '')
-            })
+            }
+
         except Exception as e:
             self._status_label.setText("Error creating request: " + str(e))
+
+        return entry
 
     def build_query_string(self, parameters):
         query_params = []
@@ -258,3 +359,61 @@ class BurpExtender(IBurpExtender, ITab):
                     params.append({'name': name, 'value': value})
 
         return params
+
+class DocumentListenerAdapter(DocumentListener):
+    def __init__(self, button, textField):
+        self.button = button
+        self.textField = textField
+
+    def insertUpdate(self, e):
+        self.updateLoadButton()
+
+    def removeUpdate(self, e):
+        self.updateLoadButton()
+
+    def changedUpdate(self, e):
+        self.updateLoadButton()
+
+    def updateLoadButton(self):
+        SwingUtilities.invokeLater(lambda: self.button.setEnabled(bool(self.textField.getText().strip())))
+
+class ListSelectionListenerAdapter(ListSelectionListener):
+    def __init__(self, extender):
+        self.extender = extender
+
+    def valueChanged(self, event):
+        selected_row = self.extender.request_table.getSelectedRow()
+        if selected_row >= 0:
+            # Access the full entry stored in the last column of the table
+            entry = self.extender.table_model.getValueAt(selected_row, 6)  # Adjusted index due to added Parameters column
+            if entry:
+                method = entry['method']
+                url = entry['url']
+                host = entry['host']
+                description = entry['description'] if entry['description'] else "No description available"
+
+                # Use the build_params_list method from BurpExtender
+                params = self.extender.build_params_list(entry)
+
+                # Format the request details using .format()
+                request_details = (
+                    "Request {}\n\n"
+                    "Method: {}\n"
+                    "URL: {}\n"
+                    "Host: {}\n"
+                    "Params: {}\n\n"
+                    "Description: {}"
+                ).format(selected_row + 1, method, url, host, params, description)
+
+                # Display the formatted request details in the text area
+                self.extender._text_area.setText(request_details)
+
+
+
+
+
+
+
+
+
+
